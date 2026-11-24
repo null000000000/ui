@@ -1,0 +1,6 @@
+{
+  "name": "Personal Analytics Intelligence System",
+  "description": "Unified personal branding and technical engineering analytics workspace with progressive disclosure and evidence-backed intelligence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

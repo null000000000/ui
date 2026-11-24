@@ -1,0 +1,1652 @@
+
+بناءً على القرارات الثلاثة، نقدر نقفل التصميم المعماري للنظام.
+
+هنسميه مؤقتاً **PERSONAL ANALYTICS INTELLIGENCE SYSTEM**.
+
+الهدف إنه يبقى نظام واحد لمتابعة رحلتك في اتجاهين: Personal Branding وTechnical Engineering، مع Intelligence Layer تربط البيانات وتستخرج منها استنتاجات قابلة للاختبار.
+
+أهم قرار معماري عندي: **Modular Monolith + Central Analytics Database + Background Data Collection**.
+
+مش هنبدأ بـMicroservices أو Data Warehouse أو بنية موزعة؛ حجم الاستخدام شخصي، ومفيش مبرر لتعقيد التشغيل من البداية.
+
+# **1. Architecture Overview**
+
+## **Personal Analytics Architecture**
+
+**01 — Data Sources**
+
+**Social Platforms**
+
+YouTube · Instagram · Facebook · TikTok · LinkedIn · X
+
+**Engineering Sources**
+
+Roadmap · GitHub · Manual Progress · Testing
+
+**02 — Integration Layer**
+
+Platform Connectors · OAuth · API Clients · Manual Input · GitHub Integration
+
+**03 — Data Processing Layer**
+
+Ingestion · Validation · Normalization · Deduplication · Metric Calculation
+
+**04 — Central PostgreSQL Database**
+
+Brand Data
+
+Engineering Data
+
+Metric History
+
+Content Relations
+
+Sync History
+
+AI Insights
+
+**05 — Intelligence Engine**
+
+Analytics Engine · Rules Engine · Trend Detection · AI Analyst · AI Advisor
+
+**06 — Presentation Layer**
+
+Command Center · Platform Dashboards · Engineering Dashboard · Cross Analytics · Reports
+
+## **Architecture Decisions**
+
+|القرار|الاختيار|
+|---|---|
+|Architecture Style|Modular Monolith|
+|Backend|NestJS + TypeScript|
+|Frontend|React + TypeScript|
+|Database|PostgreSQL|
+|ORM|Prisma|
+|Data Collection|APIs + Manual Input|
+|Background Jobs|Scheduled Worker|
+|Analytics|SQL + Analytics Services|
+|AI|LLM-based Intelligence Layer|
+|Authentication|Single-user access|
+|Deployment|Single application deployment initially|
+
+**لماذا هذا الاختيار؟**
+
+- TypeScript يخلّي الـFrontend والـBackend متجانسين.
+    
+- PostgreSQL مناسب للبيانات العلائقية والتاريخية.
+    
+- Prisma يوفر إدارة واضحة للـSchema وMigrations.
+    
+- Modular Monolith يسمح بفصل الـDomains من غير تكلفة Microservices.
+    
+- الـWorker مسؤول عن التحديثات الدورية والمهام الخلفية.
+    
+
+ممكن تستخدم نفس الخبرة الهندسية اللي هتكتسبها أثناء ORBIT في بناء أجزاء من النظام، لكن ما أنصحش بدمج المشروعين في نفس التطبيق.
+
+# **2. Backend Modules**
+
+دي حدود الـModules داخل الـBackend، وكل Module مسؤول عن Domain محدد.
+
+|Module|المسؤولية|
+|---|---|
+|`accounts`|حسابات المنصات والاتصالات|
+|`integrations`|API Connectors وOAuth|
+|`content`|المحتوى والحملات والنشر|
+|`roadmap`|الأنظمة والـMilestones|
+|`repositories`|GitHub وربط المستودعات|
+|`metrics`|تعريف المقاييس وتخزينها|
+|`ingestion`|استقبال البيانات والتحقق منها|
+|`synchronization`|Scheduled Sync وManual Sync|
+|`analytics`|الحسابات والمقارنات والاتجاهات|
+|`intelligence`|AI Insights والتوصيات|
+|`reports`|التقارير الأسبوعية والشهرية|
+|`dashboard`|تجميع البيانات للواجهات|
+
+كل Module يمتلك مسؤولياته وواجهاته الداخلية. لا تجعل الـDashboard يتعامل مباشرة مع APIs المنصات أو ينفذ عمليات حساب Metrics بنفسه.
+
+# **3. Database Design**
+
+هنا الجزء الأهم. هنقسم قاعدة البيانات إلى ست مجموعات من الجداول.
+
+## **A. Platform & Integration Domain**
+
+مسؤول عن مصادر البيانات.
+
+|Table|أهم الحقول|
+|---|---|
+|`platforms`|id, name, platform_type|
+|`platform_accounts`|id, platform_id, external_id, username|
+|`integration_credentials`|account_id, encrypted_access_token, expires_at|
+|`sync_runs`|id, account_id, status, started_at, completed_at|
+|`sync_errors`|sync_run_id, error_code, message|
+
+ملاحظات:
+
+- `platform_accounts` يمثل حسابك على كل منصة.
+    
+- `integration_credentials` يخزن بيانات الاتصال المشفرة، وليس داخل جداول التحليلات.
+    
+- `sync_runs` يسجل كل عملية تحديث سواء تلقائية أو يدوية.
+    
+- لا تخزن Access Tokens في الـLogs.
+    
+
+## **B. Content Domain**
+
+ده سجل المحتوى المركزي.
+
+|Table|أهم الحقول|
+|---|---|
+|`content_items`|id, title, description, format, created_at|
+|`publications`|id, content_item_id, platform_account_id, external_post_id, published_at|
+|`campaigns`|id, name, description, start_date, end_date|
+|`content_campaigns`|content_item_id, campaign_id|
+|`topics`|id, name|
+|`content_topics`|content_item_id, topic_id|
+|`content_milestones`|content_item_id, milestone_id|
+
+### **ليه فصلنا Content عن Publication؟**
+
+لأن نفس الفيديو ممكن يتنشر على ثلاث منصات.
+
+**Content Item: TypeScript Fundamentals**
+
+One original piece of content
+
+**YouTube**
+
+Publication 01
+
+**Instagram**
+
+Publication 02
+
+**Facebook**
+
+Publication 03
+
+كل Publication لها Metrics مستقلة وتاريخ نشر مستقل.
+
+وبالتالي تقدر تقارن أداء نفس المحتوى على منصات مختلفة من غير خلط الأرقام.
+
+## **C. Engineering Domain**
+
+ده المسؤول عن الـTechnical Journey.
+
+|Table|أهم الحقول|
+|---|---|
+|`systems`|id, name, description, start_date, status|
+|`milestones`|id, system_id, title, sequence, status|
+|`deliverables`|id, milestone_id, title, status, completed_at|
+|`milestone_reviews`|id, milestone_id, score, notes, reviewed_at|
+|`repositories`|id, name, provider, external_id, url|
+|`milestone_repositories`|milestone_id, repository_id|
+|`engineering_activities`|id, milestone_id, activity_type, occurred_at|
+|`time_entries`|id, milestone_id, started_at, ended_at, duration|
+
+أهم نقطة هنا: الـMilestone Progress مش رقم يدوي فقط.
+
+يفضل حسابه من الـDeliverables والمهام المنجزة، مع السماح بتسجيل نسبة تقديرية عند الحاجة، لكن مع توضيح مصدرها.
+
+كمان لازم نحتفظ بالـPlanned Duration والـActual Duration عشان نقدر نحلل دقة التقدير مع الوقت.
+
+## **D. Metrics Domain**
+
+ده قلب النظام.
+
+بدل ما نعمل جدول لكل Metric مثل `youtube_views` و`instagram_reach`، نستخدم Metric Registry موحد.
+
+|Table|وظيفته|
+|---|---|
+|`metric_definitions`|تعريف كل Metric|
+|`metric_observations`|تخزين القيمة المرصودة|
+|`metric_breakdowns`|أبعاد إضافية مثل مصدر الزيارة|
+|`metric_aggregates`|نتائج التجميعات المحسوبة عند الحاجة|
+|`raw_ingestion_records`|الاحتفاظ بالـPayload الأصلي|
+
+### **Metric Definition**
+
+مثال:
+
+|id|name|unit|domain|
+|---|---|---|---|
+|1|Views|count|Brand|
+|2|Watch Time|seconds|Brand|
+|3|Reach|count|Brand|
+|4|Subscribers|count|Brand|
+|5|Commits|count|Engineering|
+|6|Test Pass Rate|percentage|Engineering|
+
+كل تعريف يحتوي أيضاً على:
+
+- `source_platform`
+    
+- `aggregation_type`
+    
+- `description`
+    
+- `is_cumulative`
+    
+- `definition_version`
+    
+
+لأن معنى بعض المقاييس وطريقة احتسابها يختلفان بين المنصات.
+
+### **Metric Observation**
+
+كل قيمة مسجلة يكون لها:
+
+- `metric_definition_id`
+    
+- `platform_account_id` أو `publication_id` أو `milestone_id` أو `repository_id`
+    
+- `value`
+    
+- `period_start`
+    
+- `period_end`
+    
+- `observed_at`
+    
+- `source_type` — API أو Manual أو Calculated
+    
+- `sync_run_id` إن كانت من عملية Sync
+    
+
+مثلاً:
+
+|Metric|Value|Source|Observed At|
+|---|---|---|---|
+|Views|1,250|API|Day 1|
+|Views|2,800|API|Day 2|
+|Views|4,100|API|Day 3|
+
+ده يسمح ببناء Time-Series Charts وتحليل نمو المحتوى.
+
+**قرار مهم:** لا تجمع مقاييس غير متجانسة في رقم واحد. Views وPlays وReach ليست وحدات متطابقة. نقدر نعرضها جنب بعض، لكن لازم نحتفظ بتعريف كل واحدة.
+
+## **E. Intelligence Domain**
+
+هنا نحفظ نتائج التحليل بدل ما نعيد تشغيل الـAI في كل مرة تفتح فيها Dashboard.
+
+|Table|وظيفته|
+|---|---|
+|`insights`|النتيجة التحليلية|
+|`insight_evidence`|البيانات التي تدعم النتيجة|
+|`recommendations`|الإجراءات المقترحة|
+|`analysis_runs`|تاريخ تشغيل التحليلات|
+|`report_snapshots`|التقارير المحفوظة|
+
+مثال على Insight:
+
+**Content Performance Insight**
+
+Illustrative
+
+**Observation**
+
+متوسط وقت المشاهدة للفيديوهات التقنية انخفض خلال فترة المقارنة.
+
+**Evidence**
+
+- مقارنة بين فترتين محددتين.
+    
+- مجموعة الفيديوهات المستخدمة.
+    
+- قيم Average View Duration الأصلية.
+    
+
+**Possible Explanation**
+
+قد يكون طول الفيديو أو طريقة تقديم الفكرة مرتبطين بالتراجع.
+
+**Recommendation**
+
+اختبر مقدمة أقصر في الفيديو القادم وقارن النتيجة.
+
+الاستنتاج المحتمل لا يُخزن كحقيقة مؤكدة.
+
+الـ`insight_evidence` مهم جداً: كل Insight لازم يقدر يرجع إلى البيانات التي أنتجته.
+
+## **F. System Operations**
+
+|Table|وظيفته|
+|---|---|
+|`app_settings`|إعدادات النظام|
+|`scheduled_jobs`|إعدادات عمليات التحديث|
+|`audit_logs`|تسجيل العمليات المهمة|
+|`notifications`|التنبيهات|
+|`report_schedules`|مواعيد التقارير|
+
+# **4. العلاقات الرئيسية بين الجداول**
+
+ده التصور العلائقي الأساسي:
+
+#chatgpt-mermaid-_r_3dk_{font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";font-size:16px;fill:rgb(237, 237, 237);}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#chatgpt-mermaid-_r_3dk_ .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#chatgpt-mermaid-_r_3dk_ .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#chatgpt-mermaid-_r_3dk_ .error-icon{fill:rgb(48, 48, 48);}#chatgpt-mermaid-_r_3dk_ .error-text{fill:rgb(237, 237, 237);stroke:rgb(237, 237, 237);}#chatgpt-mermaid-_r_3dk_ .edge-thickness-normal{stroke-width:1px;}#chatgpt-mermaid-_r_3dk_ .edge-thickness-thick{stroke-width:3.5px;}#chatgpt-mermaid-_r_3dk_ .edge-pattern-solid{stroke-dasharray:0;}#chatgpt-mermaid-_r_3dk_ .edge-thickness-invisible{stroke-width:0;fill:none;}#chatgpt-mermaid-_r_3dk_ .edge-pattern-dashed{stroke-dasharray:3;}#chatgpt-mermaid-_r_3dk_ .edge-pattern-dotted{stroke-dasharray:2;}#chatgpt-mermaid-_r_3dk_ .marker{fill:rgb(175, 175, 175);stroke:rgb(175, 175, 175);}#chatgpt-mermaid-_r_3dk_ .marker.cross{stroke:rgb(175, 175, 175);}#chatgpt-mermaid-_r_3dk_ svg{font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";font-size:16px;}#chatgpt-mermaid-_r_3dk_ p{margin:0;}#chatgpt-mermaid-_r_3dk_ .entityBox{fill:rgb(9, 23, 44);stroke:rgb(31, 78, 148);}#chatgpt-mermaid-_r_3dk_ .relationshipLabelBox{fill:rgb(48, 48, 48);opacity:0.7;background-color:rgb(48, 48, 48);}#chatgpt-mermaid-_r_3dk_ .relationshipLabelBox rect{opacity:0.5;}#chatgpt-mermaid-_r_3dk_ .labelBkg{background-color:rgba(48, 48, 48, 0.5);}#chatgpt-mermaid-_r_3dk_ .edgeLabel{background-color:rgb(0, 0, 0);}#chatgpt-mermaid-_r_3dk_ .edgeLabel .label rect{fill:rgb(0, 0, 0);}#chatgpt-mermaid-_r_3dk_ .edgeLabel .label text{fill:rgb(237, 237, 237);}#chatgpt-mermaid-_r_3dk_ .edgeLabel .label{fill:rgb(31, 78, 148);font-size:14px;}#chatgpt-mermaid-_r_3dk_ .label{font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";color:rgb(237, 237, 237);}#chatgpt-mermaid-_r_3dk_ .edge-pattern-dashed{stroke-dasharray:8,8;}#chatgpt-mermaid-_r_3dk_ .node rect,#chatgpt-mermaid-_r_3dk_ .node circle,#chatgpt-mermaid-_r_3dk_ .node ellipse,#chatgpt-mermaid-_r_3dk_ .node polygon{fill:rgb(9, 23, 44);stroke:rgb(31, 78, 148);stroke-width:1px;}#chatgpt-mermaid-_r_3dk_ .relationshipLine{stroke:rgb(175, 175, 175);stroke-width:1px;fill:none;}#chatgpt-mermaid-_r_3dk_ .marker{fill:none!important;stroke:rgb(175, 175, 175)!important;stroke-width:1;}#chatgpt-mermaid-_r_3dk_ [data-look=neo].labelBkg{background-color:rgba(48, 48, 48, 0.5);}#chatgpt-mermaid-_r_3dk_ .node .neo-node{stroke:rgb(31, 78, 148);}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node rect,#chatgpt-mermaid-_r_3dk_ [data-look="neo"].cluster rect,#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node polygon{stroke:url(#chatgpt-mermaid-_r_3dk_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].swimlane.cluster rect{filter:none;}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node path{stroke:url(#chatgpt-mermaid-_r_3dk_-gradient);stroke-width:1px;}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node .outer-path{filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node .neo-line path{stroke:rgb(31, 78, 148);filter:none;}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node circle{stroke:url(#chatgpt-mermaid-_r_3dk_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].node circle .state-start{fill:#000000;}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].icon-shape .icon{fill:url(#chatgpt-mermaid-_r_3dk_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-_r_3dk_ [data-look="neo"].icon-shape .icon-neo path{stroke:url(#chatgpt-mermaid-_r_3dk_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-_r_3dk_ :root{--mermaid-font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";}PLATFORMSPLATFORM_ACCOUNTSPUBLICATIONSCONTENT_ITEMSCAMPAIGNSTOPICSMILESTONESSYSTEMSDELIVERABLESTIME_ENTRIESREPOSITORIESMETRIC_DEFINITIONSMETRIC_OBSERVATIONSSYNC_RUNSRAW_INGESTION_RECORDSINSIGHTSINSIGHT_EVIDENCERECOMMENDATIONShaspublishesappears_asbelongs_tocategorized_bydocumentscontainsrequirestracksusesdefinesaccount_metricscontent_metricsmilestone_metricsrepository_metricssynchronizesreceivessupported_byprovidesproduces
+
+ملاحظة تنفيذية: العلاقات متعددة الأطراف في الـERD ستحتاج جداول Junction فعلية، والـMetric Observations يجب أن تستخدم Foreign Keys واضحة مع قاعدة تحقق تضمن ارتباط كل Observation بهدف واحد مناسب، وليس مجرد `entity_id` نصي بلا مرجع.
+
+# **5. Data Collection & Synchronization**
+
+أنت اخترت Both، وبالتالي عندنا طريقتان لتحديث البيانات:
+
+**Scheduled Sync**
+
+- Worker يعمل حسب الجدول المحدد.
+    
+- يجلب بيانات المنصة.
+    
+- يتحقق من صحتها.
+    
+- يحولها إلى Metrics موحدة.
+    
+- يحفظ Snapshot جديدة.
+    
+- يسجل نجاح أو فشل العملية.
+    
+
+**Manual Sync**
+
+- زر `Sync Now` داخل صفحة كل منصة.
+    
+- إمكانية تحديث كل الحسابات من Command Center.
+    
+- نفس الـPipeline المستخدمة في Scheduled Sync.
+    
+- يعرض آخر وقت تحديث ونتيجة العملية.
+    
+
+**Sync Lifecycle**
+
+1. Trigger — Scheduled أو Manual
+    
+2. Fetch — الاتصال بمصدر البيانات
+    
+3. Validate — التحقق من الحقول والصلاحيات
+    
+4. Normalize — تحويل البيانات إلى شكل موحد
+    
+5. Deduplicate — منع تكرار السجلات
+    
+6. Persist — حفظ البيانات والـSnapshots
+    
+7. Analyze — تحديث التحليلات المتأثرة
+    
+8. Complete — تسجيل النتيجة ووقت التحديث
+    
+
+### **سياسة التحديث المقترحة**
+
+|البيانات|التحديث المبدئي|
+|---|---|
+|Account Metrics|مرة يومياً|
+|Publication Metrics|مرة يومياً|
+|Recent Content|عدة مرات يومياً عند الحاجة|
+|GitHub Activity|مرة يومياً|
+|Manual Entries|فور الإدخال|
+|AI Analysis|عند وصول بيانات جديدة أو طلب التحليل|
+
+دي Defaults أولية، وليست حدوداً ثابتة. هنعدلها وفق API quotas وتوفر البيانات.
+
+**قرار Historical Data = Fresh**
+
+يعني النظام يبدأ من تاريخ تشغيله، ولا يحتاج إلى Backfill للمحتوى القديم.
+
+لكن نحتفظ بتاريخ كل Snapshot من أول يوم، ونسمح بإضافة سجل يدوي جديد لاحقاً إذا أردت توثيق حدث قديم، مع تمييزه عن البيانات التي تم جمعها في وقتها.
+
+# **6. Intelligence Engine Design**
+
+أقترح تقسيمه إلى أربع طبقات:
+
+**Layer 1 — Metrics Engine**
+
+حساب المتوسطات والنسب والتغيرات والـGrowth Rates.
+
+**Layer 2 — Rules & Detection Engine**
+
+كشف الانخفاضات والارتفاعات غير المعتادة ومقارنة الأداء وتحديد الحالات التي تحتاج مراجعة.
+
+**Layer 3 — AI Analyst & Advisor**
+
+تفسير النتائج، طرح احتمالات، اقتراح تجارب وتحسينات.
+
+**Layer 4 — Verification**
+
+قياس نتائج الإجراءات المقترحة والتحقق من تأثيرها على البيانات اللاحقة.
+
+### **AI Analyst**
+
+يجيب عن:
+
+- ماذا حدث؟
+    
+- ما الذي تغير؟
+    
+- ما المحتوى الذي تفوق؟
+    
+- أين يوجد تراجع؟
+    
+- ما الأدلة التي تدعم الملاحظة؟
+    
+
+### **AI Advisor**
+
+يجيب عن:
+
+- ماذا يجب أن أختبر؟
+    
+- ما نوع المحتوى الذي يستحق التكرار؟
+    
+- ما الـMilestone الذي يحتاج اهتماماً؟
+    
+- كيف أحسن طريقة توثيق عملي؟
+    
+- ما التجربة القادمة التي يمكن قياسها؟
+    
+
+لن نسمح للـAI بتعديل بيانات الـMetrics أو تغيير حالة الـMilestones تلقائياً. يقدر يقترح، وأنت تقرر.
+
+# **7. Frontend Information Architecture**
+
+أقترح Navigation بالشكل التالي:
+
+## **Analytics Workspace**
+
+Personal
+
+**Workspace**
+
+- Command Center
+    
+- Intelligence Center
+    
+- Reports
+    
+
+**Brand Analytics**
+
+- YouTube
+    
+- Instagram
+    
+- Facebook
+    
+- TikTok
+    
+- LinkedIn
+    
+- X
+    
+- Content Library
+    
+- Campaigns
+    
+
+**Engineering Analytics**
+
+- Roadmap Overview
+    
+- Systems
+    
+- Milestones
+    
+- GitHub
+    
+- Engineering Quality
+    
+- Time Tracking
+    
+
+**Cross Analytics**
+
+- Content vs Milestones
+    
+- Platform Comparison
+    
+- Topic Performance
+    
+- Growth Trends
+    
+
+**System**
+
+- Integrations
+    
+- Data Collection
+    
+- Sync History
+    
+- Settings
+    
+
+كل صفحة فيها Global Date Range، مع إمكانية إضافة فلاتر خاصة بها.
+
+# **8. Project Structure**
+
+بما إننا اخترنا Modular Monolith، أقترح هيكل قريب من ده:
+
+```
+personal-analytics/
+│
+├── apps/
+│   ├── web/
+│   │   └── src/
+│   │       ├── modules/
+│   │       │   ├── command-center/
+│   │       │   ├── brand-analytics/
+│   │       │   ├── engineering/
+│   │       │   ├── cross-analytics/
+│   │       │   ├── intelligence/
+│   │       │   └── settings/
+│   │       ├── components/
+│   │       └── lib/
+│   │
+│   └── api/
+│       └── src/
+│           ├── modules/
+│           │   ├── accounts/
+│           │   ├── integrations/
+│           │   ├── content/
+│           │   ├── roadmap/
+│           │   ├── repositories/
+│           │   ├── metrics/
+│           │   ├── ingestion/
+│           │   ├── synchronization/
+│           │   ├── analytics/
+│           │   ├── intelligence/
+│           │   └── reports/
+│           │
+│           └── workers/
+│
+├── packages/
+│   ├── shared-types/
+│   ├── validation/
+│   └── analytics-core/
+│
+├── prisma/
+│   ├── schema.prisma
+│   └── migrations/
+│
+├── docs/
+│   ├── architecture/
+│   └── data-dictionary/
+│
+└── README.md
+```
+
+ده هيكل مقترح، مش شرط نعمل كل الملفات والمجلدات قبل ما نحتاجها.
+
+# **9. قواعد لا نتنازل عنها في التصميم**
+
+1. **Historical Integrity:** لا نستبدل Snapshot قديمة بقيمة جديدة.
+    
+2. **Source Traceability:** كل Metric نعرف مصدرها.
+    
+3. **Metric Consistency:** لا نقارن مقاييس مختلفة باعتبارها متطابقة.
+    
+4. **Data Validation:** البيانات اليدوية والـAPI تمر بنفس قواعد التحقق.
+    
+5. **Idempotent Sync:** إعادة نفس عملية المزامنة لا تنتج سجلات مكررة.
+    
+6. **AI Evidence:** لا توجد Insight من غير Evidence يمكن الرجوع إليه.
+    
+7. **Privacy:** تخزين Tokens مشفرة، وعدم تسجيل الأسرار في Logs.
+    
+8. **Single-user Scope:** لا نبني Multi-tenant Architecture حالياً.
+    
+9. **Graceful Failure:** فشل API لا يعطل Dashboard أو يمسح البيانات الموجودة.
+    
+10. **Data Ownership:** تقدر تصدر بياناتك وتحتفظ بنسخة احتياطية منها.
+    
+
+# **10. ترتيب التنفيذ الفعلي**
+
+هنا هنفصل بين Architecture المكتملة وبين ما سنبنيه فعلياً. مش مطلوب تنفيذ كل Modules مرة واحدة.
+
+1. **Foundation — Data Model**
+    
+    - Project setup.
+        
+    - PostgreSQL + Prisma.
+        
+    - Platform Accounts.
+        
+    - Content Registry.
+        
+    - Roadmap & Milestones.
+        
+    - Metric Definitions & Observations.
+        
+    
+    أول أولوية
+    
+2. **Manual Operations**
+    
+    - تسجيل المحتوى.
+        
+    - ربطه بالـMilestones.
+        
+    - إدخال بيانات الأداء.
+        
+    - تسجيل الوقت والـDeliverables.
+        
+    - Dashboard أولية.
+        
+    
+3. **First Integrations**
+    
+    - YouTube OAuth & Analytics.
+        
+    - GitHub API.
+        
+    - Sync Worker.
+        
+    - Snapshot History.
+        
+    
+4. **Platform Expansion**
+    
+    - Instagram.
+        
+    - Facebook.
+        
+    - بقية المنصات حسب إمكانية الوصول للـAPIs.
+        
+    
+5. **Analytics & Intelligence**
+    
+    - Cross Analytics.
+        
+    - Trend Detection.
+        
+    - AI Analyst.
+        
+    - AI Advisor.
+        
+    - Weekly Reports.
+        
+    
+
+## **قراري النهائي**
+
+# **Architecture Locked**
+
+Approved Design
+
+- Modular Monolith.
+    
+- NestJS + React + PostgreSQL + Prisma.
+    
+- Hybrid Data Collection.
+    
+- Fresh Historical Baseline.
+    
+- Scheduled + Manual Sync.
+    
+- Intelligence Layer with Analyst & Advisor.
+    
+- Personal Single-user Scope.
+    
+- Centralized Metric History.
+    
+- Content ↔ Milestone Relationships.
+    
+
+**في رأيي، أهم شيء في المشروع كله هو الـMetric Observation Model.** لو صممناه صح، تقدر تضيف YouTube أو GitHub أو منصة جديدة من غير ما تغيّر فلسفة النظام. والـAI هيكون قادر يبني تحليلات على تاريخ حقيقي بدل ما يقرأ أرقاماً متفرقة.
+
+الخطوة الهندسية التالية هي تحويل التصميم إلى `architecture.md` و`schema.prisma` فعليين، ثم تنفيذ الـFoundation قبل أي Integrations.
+
+وبعد إطلاق النظام وجمع أول بيانات، يمكنني إعداد تقرير أسبوعي يجمع أداء منصاتك وتقدم الـMilestones والـInsights.
+
+📊تقرير Analytics أسبوعي بعد الإطلاقTap to set up
+
+
+
+
+
+تمام. هنصمم الـUI/UX مع بعض خطوة بخطوة، وهنعتبر الـArchitecture اللي اعتمدناها هي الأساس.
+
+مش هنبدأ بكتابة Components أو اختيار ألوان عشوائية. الأول هنحدد شكل التجربة وطريقة استخدام النظام، وبعدها ننتقل للـVisual Design.
+
+## **1. أول قرار: Design Direction**
+
+أنا عندي تصور مبدئي للنظام:
+
+**Personal Analytics Command Center**
+
+- Dark-first interface.
+    
+- Minimalist واحترافي.
+    
+- Data-dense لكن منظم.
+    
+- Charts واضحة ومساحاتها كافية.
+    
+- Navigation جانبي ثابت.
+    
+- تفاصيل كثيرة بدون ازدحام بصري.
+    
+- التركيز على الأرقام والاتجاهات والاستنتاجات.
+    
+
+[20 Black Blue Color Combinations: Hex Codes & Tips](https://images.openai.com/static-rsc-4/AKH9qOkp9GBvzGZ1VBMmvBc50m-pu2gtDMN1Cck_WoGXvMFh8b3ey8JsUbCJTQNmgXf18dSvsASZZFoHsIJKlLM2qCQ1vg7CZOkMWqMmasQrVnVarBsq3GLe6Wfat0cvYyFxn8J8LBR2dEr2j48jurubmRVGOF6MB5DYt_FnLS0?purpose=inline)
+
+**A — Dark Minimal**
+
+هادئ، نظيف، ويركز على البيانات.
+
+[Futuristic Dark Mode SaaS Dashboard UI/UX Design by ALI HAMZA on Dribbble](https://images.openai.com/static-rsc-4/qFUK_P8usZQ1glrW0hxt85zIT6MKqdvA5b7jPd6FQMc3UCsbcqlZMlxYNmSCmbtnvSMbObgvPbmEqgnDA9qnxCgKZ7ssXuqARYYRin6cC9v_rNOMJ3A923J4Q3c93kSzJcUbJGMK_-u1R7qwOOGUEDzbdOW2ZUzaRtNMRB-wiic?purpose=inline)
+
+**B — Dark Intelligence**
+
+طابع تقني أكثر مع إبراز الـAI Insights.
+
+[Azure Color Palette Ideas (20 Picks + Hex)](https://images.openai.com/static-rsc-4/xY7eZLfHIwLHgA1iNM0_JeV63qaq9fqA_z1rkna0cyWV8vtaJ1U1K5_RFa-uotrbFoA3N_NuqNl38voQGLUiiHRgKAjKpjgPrCeI_KQMpvqQ-RbZmCb4fJbgUEhd5zN9SpfLCLO1SSp51JJnbjNajQYcWsG_N1-u0GtNfvj21rg?purpose=inline)
+
+**C — Light Enterprise**
+
+واجهة إدارية تقليدية وواضحة.
+
+[Analytics Dashboard - Web App by Kevin Rach for Maximaze Studio on Dribbble](https://images.openai.com/static-rsc-4/A37UICd8oSFAlzQLqquG4MPxUaalbhsrBv8dgON5RYqkUpOz-UskfJJ73midFAro6JzE91qM7MACXhkBugWMDpFz7SyMgDqRXykEBByWQP_ap8XTP0qQ6l9qWdwQMY2SAKDIAEXa0T0PaEcgJ0q_8l3kFm1VB5_tFYTN1Z01Ybc?purpose=inline)
+
+**D — Editorial Analytics**
+
+Minimal typography مع مساحات واسعة وعرض تحليلي.
+
+## **2. هنصمم بالترتيب ده**
+
+1. Design Direction — الهوية البصرية.
+    
+2. Design System — الألوان، الخطوط، المسافات، Cards، Charts.
+    
+3. Application Shell — Sidebar، Header، Navigation.
+    
+4. Command Center — الصفحة الرئيسية.
+    
+5. Brand Analytics — صفحات المنصات.
+    
+6. Engineering Analytics — الأنظمة والـMilestones.
+    
+7. Cross Analytics — الربط بين المحتوى والتقدم.
+    
+8. Intelligence Center — التقارير والـAI Insights.
+    
+
+## **3. نبدأ باختيار الاتجاه**
+
+**اختيار الهوية البصرية**
+
+A — Dark Minimal
+
+B — Dark Intelligence
+
+C — Light Enterprise
+
+D — Editorial Analytics
+
+**كثافة المعلومات**
+
+Data Dense — معلومات وتحليلات كثيرة في الشاشة.
+
+Balanced — توازن بين البيانات والمساحات.
+
+Minimal — أهم المؤشرات فقط وتفاصيل عند الطلب.
+
+**Accent Color**
+
+Electric Blue
+
+Violet
+
+Emerald
+
+Monochrome
+
+اعتماد الاتجاه
+
+**اقتراحي المبدئي:** A + Balanced + Electric Blue.
+
+عايزين الواجهة تحسسك إنك بتستخدم أداة تحليل احترافية، مش لوحة تحكم SaaS مليانة ألوان وتأثيرات لمجرد الشكل.
+
+
+
+
+
+
+واضح. أنت عايز الواجهة تكون **Progressive Disclosure**: أقل قدر ممكن من العناصر ظاهر بشكل افتراضي، والعناصر الإضافية لا تظهر إلا لما المستخدم يطلبها بإجراء واضح.
+
+ده يغيّر طريقة تصميم الـApplication Shell والـDesign System، مش مجرد شكل الـDashboard.
+
+## **القاعدة الأساسية**
+
+**Default = Minimal. Action = More Information.**
+
+مثلاً:
+
+|الحالة|الوضع الافتراضي|بعد التفاعل|
+|---|---|---|
+|Navigation|Sidebar مختصرة|تتوسع عند الطلب|
+|Filters|زر Filters فقط|تظهر الفلاتر عند الضغط|
+|Date Range|الفترة الحالية فقط|قائمة الفترات عند الضغط|
+|Metrics|أهم 3–4 مؤشرات|باقي المؤشرات عند View All|
+|Charts|رسم واحد أساسي|تفاصيل إضافية عند التوسيع|
+|Tables|أعمدة أساسية|Columns إضافية عند الاختيار|
+|Actions|أهم Action فقط|قائمة More Actions|
+|Settings|غير ظاهرة|تظهر عند فتح Settings|
+
+## **تعديلات الـApplication Shell**
+
+**ANALYTICS**
+
+OVERVIEW
+
+# **Command Center**
+
+Brand
+
+# **—**
+
+Engineering
+
+# **—**
+
+**Performance**
+
+Primary visualization
+
+Additional information hidden
+
+View details →
+
+_تصور مبدئي للواجهة بعد تطبيق القاعدة._
+
+## **قواعد التصميم الجديدة**
+
+1. لا نظهر عنصرًا لمجرد أنه متاح.
+    
+2. لا نعرض أكثر من مستوى تفاصيل واحد افتراضيًا.
+    
+3. أي مجموعة عناصر إضافية تكون خلف Action واضح.
+    
+4. نستخدم Expand / Collapse بدلاً من عرض كل شيء مرة واحدة.
+    
+5. لا نكرر نفس البيانات في أكثر من مكان.
+    
+6. نحافظ على سهولة الوصول؛ الاختصار لا يعني إخفاء الوظائف الأساسية بشكل مربك.
+    
+7. لا نستخدم Popups لكل شيء؛ بعض التفاصيل تستحق صفحة مستقلة أو Side Panel.
+    
+
+**القرار المعماري للواجهة:** Minimal by Default, Expand on Demand.
+
+هنعتمد ده كقاعدة حاكمة لكل الصفحات، بما فيها Command Center وBrand Analytics وEngineering وIntelligence.
+
+
+
+
+هنبني هيكل النظام بالكامل على القاعدة التي اعتمدناها:
+
+**Minimal by Default — Expand on Demand**
+
+يعني كل صفحة تبدأ بأقل عدد من العناصر الضرورية لفهم الحالة، وأي تفاصيل أو أدوات إضافية تظهر فقط بعد Action من المستخدم.
+
+هنفصل بين **Page Structure** و**Expanded States**؛ بحيث نحدد لكل صفحة ما يظهر أولاً، وما الذي يمكن فتحه عند الحاجة.
+
+# **1. الهيكل العام للنظام**
+
+## **Analytics Workspace**
+
+**Command Center**
+
+نظرة عامة على حالة النظام بالكامل
+
+**Brand**
+
+YouTube · Instagram · Facebook · TikTok · LinkedIn · X
+
+**Engineering**
+
+Roadmap · Systems · Milestones · GitHub · Quality
+
+**Content**
+
+Content Library · Campaigns
+
+**Intelligence**
+
+Insights · Cross Analytics · Reports
+
+**System**
+
+Integrations · Sync History · Settings
+
+# **2. Application Shell — الهيكل الثابت**
+
+سيظل ثابتاً في كل الصفحات:
+
+|العنصر|المحتوى|
+|---|---|
+|Sidebar|أيقونات وأقسام رئيسية مختصرة|
+|Header|اسم الصفحة + Breadcrumb|
+|Context Actions|الإجراءات المرتبطة بالصفحة|
+|Workspace|محتوى الصفحة|
+|Detail Layer|Side Panel أو Expandable Section عند الطلب|
+
+**العناصر العامة في Header:**
+
+- Page Title.
+    
+- Date Range عند الحاجة.
+    
+- Sync Status.
+    
+- Sync Now.
+    
+- قائمة إعدادات الصفحة عند الحاجة.
+    
+
+لن نعرض كل هذه العناصر بنفس الدرجة في كل صفحة؛ فقط ما تحتاجه الصفحة.
+
+# **3. Command Center**
+
+Primary Dashboard
+
+الصفحة الرئيسية، وظيفتها الإجابة عن سؤال واحد: _ما الحالة الحالية لأدائي؟_
+
+WORKSPACE / OVERVIEW
+
+# **Command Center**
+
+Current overview · Last 30 days
+
+Brand Performance
+
+# **—**
+
+Primary indicator
+
+Engineering Progress
+
+# **—**
+
+Overall progress
+
+**Performance Overview**
+
+Combined trend visualization
+
+**Latest Insight**
+
+One high-priority finding or an empty state
+
+Additional sections
+
+Expand on demand
+
+**الهيكل:**
+
+1. Brand Performance — مؤشر مختصر.
+    
+2. Engineering Progress — مؤشر مختصر.
+    
+3. Performance Overview — رسم رئيسي.
+    
+4. Latest Insight — أهم Insight واحدة.
+    
+5. Recent Activity — مخفية افتراضياً.
+    
+6. Quick Actions — Sync Now، إضافة محتوى، تسجيل نشاط.
+    
+
+**عند التوسيع:** تفاصيل المنصات، توزيع الأداء، Milestone status، آخر الأنشطة، والتنبيهات.
+
+# **4. Brand Analytics**
+
+هذا القسم يحتوي على صفحة مستقلة لكل منصة، مع نفس الهيكل الأساسي حتى تكون المقارنة بينها سهلة.
+
+## **4.1 Platform Overview**
+
+الصفحات:
+
+- YouTube
+    
+- Instagram
+    
+- Facebook
+    
+- TikTok
+    
+- LinkedIn
+    
+- X
+    
+
+## **YouTube**
+
+Connected / Status
+
+PLATFORM OVERVIEW
+
+Views
+
+# **—**
+
+Watch Time
+
+# **—**
+
+Subscribers
+
+# **—**
+
+Engagement
+
+# **—**
+
+**Performance Trend**
+
+Primary metric chart
+
+Content performance
+
+View all →
+
+**الهيكل الموحد لكل منصة:**
+
+|القسم|ما يعرضه|
+|---|---|
+|Overview|أهم مؤشرات المنصة|
+|Performance|اتجاه الأداء عبر الزمن|
+|Content Performance|ترتيب المحتوى حسب الأداء|
+|Audience|بيانات الجمهور المتاحة|
+|Engagement|التفاعل ومعدلاته|
+|Growth|نمو الحساب|
+|Insights|ملاحظات وتحليلات المنصة|
+|Data Status|مصدر البيانات وآخر Sync|
+
+هذه ليست أقساماً مفتوحة كلها معاً؛ الصفحة تبدأ بالـOverview، وباقي الأقسام تظهر من خلال Tabs أو Expandable Sections.
+
+## **4.2 Content Details**
+
+عند فتح Reel أو Video أو Post معين:
+
+- Content Information.
+    
+- Publication Information.
+    
+- Performance Summary.
+    
+- Views / Reach / Impressions حسب المنصة.
+    
+- Watch Time وRetention حيثما تتوفر.
+    
+- Engagement Breakdown.
+    
+- Performance Timeline.
+    
+- AI Analysis.
+    
+- Comparison with Similar Content.
+    
+
+نحتفظ بالفصل بين المحتوى نفسه وبين كل Publication على منصة معينة.
+
+## **4.3 Content Library**
+
+- قائمة المحتوى.
+    
+- Search.
+    
+- Filters مخفية افتراضياً.
+    
+- Content Type.
+    
+- Platform.
+    
+- Publication Status.
+    
+- Topic.
+    
+- Date.
+    
+- Performance.
+    
+
+## **4.4 Campaigns**
+
+- Campaign List.
+    
+- Campaign Details.
+    
+- Content linked to campaign.
+    
+- Platform Distribution.
+    
+- Performance Summary.
+    
+- Campaign Comparison.
+    
+
+# **5. Engineering Analytics**
+
+هذا القسم يتابع الرحلة الهندسية من مستوى الـRoadmap حتى مستوى الـDeliverable.
+
+## **5.1 Roadmap**
+
+## **Engineering Roadmap**
+
+18-Month Engineering Journey
+
+**Current System**
+
+System 01
+
+# **ORBIT**
+
+Overall completion — Not yet calculated
+
+**Systems**
+
+View all →
+
+**System 01 — ORBIT**
+
+Enterprise SaaS Platform
+
+**System 02**
+
+Next engineering system
+
+**الهيكل:**
+
+- Overall Roadmap Progress.
+    
+- Active System.
+    
+- Systems Timeline.
+    
+- Milestone Completion.
+    
+- Delayed / Blocked Milestones.
+    
+- Roadmap History.
+    
+
+التفاصيل الكاملة تظهر عند فتح System.
+
+## **5.2 Systems**
+
+كل System له صفحة مستقلة:
+
+1. System Overview.
+    
+2. Architecture.
+    
+3. Milestones.
+    
+4. Deliverables.
+    
+5. Repository.
+    
+6. Engineering Quality.
+    
+7. Activity History.
+    
+8. Time Investment.
+    
+
+الواجهة الافتراضية تعرض Overview فقط.
+
+## **5.3 Milestones**
+
+صفحة مستقلة لكل Milestone.
+
+- Milestone Objective.
+    
+- Status.
+    
+- Progress.
+    
+- Planned vs Actual Time.
+    
+- Skills Covered.
+    
+- Deliverables.
+    
+- Tests & Evidence.
+    
+- GitHub Activity.
+    
+- Quality Review.
+    
+- Blockers.
+    
+- AI Evaluation.
+    
+
+**عند فتح Deliverable:**
+
+- الملفات المرتبطة.
+    
+- Git Commit / PR.
+    
+- Test Results.
+    
+- Evidence.
+    
+- Review History.
+    
+
+## **5.4 GitHub**
+
+- Repository Overview.
+    
+- Commit Activity.
+    
+- Pull Requests.
+    
+- Issues.
+    
+- Contributions.
+    
+- Code Changes.
+    
+- Repository Health.
+    
+- Linked Systems & Milestones.
+    
+
+## **5.5 Engineering Quality**
+
+- Code Quality.
+    
+- Test Coverage.
+    
+- Build Status.
+    
+- Security Checks.
+    
+- Architecture Compliance.
+    
+- Documentation Completeness.
+    
+- Technical Debt.
+    
+- Quality Trend.
+    
+
+ملاحظة: كل مؤشر يحتاج تعريفاً واضحاً وطريقة قياس؛ لن نعتبر GitHub activity وحده دليلاً على جودة هندسية.
+
+# **6. Cross Analytics**
+
+Cross-Domain Analysis
+
+هذه الصفحة تربط بين Personal Branding وEngineering Progress.
+
+الهدف: اكتشاف العلاقات والأنماط بين النشاط التقني والمحتوى المنشور.
+
+**الهيكل الافتراضي:**
+
+1. Cross-Domain Overview.
+    
+2. Brand vs Engineering Activity.
+    
+3. Time Investment vs Output.
+    
+4. Content Publishing vs Technical Progress.
+    
+5. Correlation Findings.
+    
+
+**عند التوسيع:**
+
+- اختيار متغيرات المقارنة.
+    
+- تحديد فترة زمنية.
+    
+- مقارنة أكثر من System أو Platform.
+    
+- تحليل العلاقة بين الوقت والنتائج.
+    
+- عرض الأدلة والبيانات المستخدمة.
+    
+
+مثال: هل زيادة وقت العمل على مشروع معين ارتبطت بزيادة المحتوى التقني المنشور؟ هذا ارتباط محتمل وليس إثباتاً للسببية.
+
+# **7. Intelligence Center**
+
+المركز المسؤول عن تحويل البيانات إلى قرارات قابلة للتنفيذ.
+
+سنقسمه إلى أربع صفحات:
+
+## **7.1 Insights**
+
+- Latest Insights.
+    
+- Priority.
+    
+- Domain.
+    
+- Evidence.
+    
+- Confidence.
+    
+- Status.
+    
+
+عند فتح Insight:
+
+- What happened?
+    
+- Why it may have happened.
+    
+- Supporting Evidence.
+    
+- Confidence Level.
+    
+- Related Metrics.
+    
+- Suggested Action.
+    
+
+## **7.2 Recommendations**
+
+- Suggested Experiments.
+    
+- Expected Outcome.
+    
+- Success Metric.
+    
+- Measurement Period.
+    
+- Status.
+    
+
+كل Recommendation يمكن أن تكون:
+
+`Proposed → Accepted → Running → Evaluated`
+
+ولا تتحول إلى حقيقة أو نتيجة إلا بعد قياسها.
+
+## **7.3 Analysis Runs**
+
+سجل تحليلات الذكاء الاصطناعي:
+
+- Analysis Type.
+    
+- Scope.
+    
+- Date.
+    
+- Data Sources.
+    
+- Result.
+    
+- Confidence.
+    
+- Execution Status.
+    
+
+## **7.4 Verification**
+
+لمتابعة نتائج التجارب والتوصيات:
+
+- Experiment.
+    
+- Baseline.
+    
+- Target.
+    
+- Actual Result.
+    
+- Difference.
+    
+- Conclusion.
+    
+
+# **8. Reports**
+
+صفحة التقارير تكون بسيطة، ولا تعرض أدوات إنشاء التقارير كلها افتراضياً.
+
+**الصفحة الرئيسية:**
+
+- Recent Reports.
+    
+- Saved Reports.
+    
+- Generate Report.
+    
+
+**عند الضغط على Generate Report:**
+
+1. Report Type.
+    
+2. Date Range.
+    
+3. Selected Platforms / Systems.
+    
+4. Metrics.
+    
+5. Include AI Insights.
+    
+6. Generate.
+    
+
+**أنواع التقارير:**
+
+|التقرير|المحتوى|
+|---|---|
+|Brand Report|أداء المنصات والمحتوى|
+|Engineering Report|الأنظمة والـMilestones|
+|Cross Report|العلاقات بين المجالين|
+|Intelligence Report|Insights والتوصيات|
+|Custom Report|تقرير مخصص|
+
+# **9. System**
+
+هذا القسم يحتوي على إدارة وتشغيل النظام، وليس تحليلات الأداء.
+
+## **9.1 Integrations**
+
+- Connected Accounts.
+    
+- Available Integrations.
+    
+- Connection Status.
+    
+- Permissions.
+    
+- Last Successful Sync.
+    
+- Reconnect / Disconnect.
+    
+
+صفحة مستقلة لكل Integration تعرض الصلاحيات والبيانات المدعومة والمفقودة.
+
+## **9.2 Sync History**
+
+- Recent Sync Runs.
+    
+- Status.
+    
+- Source.
+    
+- Start / End Time.
+    
+- Records Processed.
+    
+- Errors.
+    
+
+عند فتح Sync Run:
+
+- Execution Details.
+    
+- Imported Records.
+    
+- Skipped Records.
+    
+- Errors.
+    
+- Retry Action.
+    
+
+## **9.3 Settings**
+
+تقسيم الإعدادات إلى:
+
+- General.
+    
+- Analytics Preferences.
+    
+- Metric Definitions.
+    
+- AI Configuration.
+    
+- Notifications.
+    
+- Data Management.
+    
+- Security.
+    
+- Backup & Export.
+    
+
+## **9.4 Notifications**
+
+- Critical Errors.
+    
+- Sync Failures.
+    
+- Important Insights.
+    
+- Experiment Results.
+    
+- System Warnings.
+    
+
+الإشعارات العادية لا تظهر على شكل قائمة دائمة؛ تظهر عند الضغط على أيقونة Notifications.
+
+# **10. خريطة التنقل النهائية**
+
+هذه هي قائمة الصفحات التي سيحتوي عليها النظام:
+
+**Workspace**
+
+- Command Center
+
+**Brand**
+
+- YouTube
+    
+- Instagram
+    
+- Facebook
+    
+- TikTok
+    
+- LinkedIn
+    
+- X
+    
+
+**Content**
+
+- Content Library
+    
+- Content Details
+    
+- Campaigns
+    
+- Campaign Details
+    
+
+**Engineering**
+
+- Roadmap
+    
+- Systems
+    
+- System Details
+    
+- Milestones
+    
+- Milestone Details
+    
+- Deliverables
+    
+- GitHub
+    
+- Engineering Quality
+    
+
+**Intelligence**
+
+- Cross Analytics
+    
+- Insights
+    
+- Recommendations
+    
+- Analysis Runs
+    
+- Verification
+    
+- Reports
+    
+
+**System**
+
+- Integrations
+    
+- Sync History
+    
+- Notifications
+    
+- Settings
+    
+
+# **11. قواعد سلوك كل الصفحات**
+
+هذه القواعد ستطبق على النظام كله:
+
+|المبدأ|التنفيذ|
+|---|---|
+|Minimal Default|أقل محتوى مفيد عند فتح الصفحة|
+|Progressive Disclosure|التفاصيل تظهر عند الطلب|
+|Contextual Actions|الأدوات مرتبطة بالصفحة الحالية|
+|Consistent Layout|نفس نمط العرض للصفحات المتشابهة|
+|Drill Down|الانتقال من المؤشر إلى مصدره وتفاصيله|
+|Data Transparency|توضيح مصدر البيانات وتوفرها|
+|No Fake Metrics|البيانات غير المتاحة لا تتحول إلى صفر|
+|AI Separation|فصل البيانات المحسوبة عن استنتاجات AI|
+
+## **12. ترتيب بناء الواجهات**
+
+أقترح تنفيذ التصميم بهذا الترتيب، حتى نبني المكونات المشتركة أولاً:
+
+1. Application Shell + Navigation.
+    
+2. Command Center.
+    
+3. Platform Analytics Template ثم صفحات المنصات.
+    
+4. Content Library + Content Details.
+    
+5. Roadmap + Systems + Milestones.
+    
+6. GitHub + Engineering Quality.
+    
+7. Cross Analytics.
+    
+8. Intelligence Center.
+    
+9. Reports.
+    
+10. Integrations + Sync History + Settings.
+    
+
+**النتيجة:** أصبح لدينا Page Map وهيكل أولي لجميع الصفحات، لكننا لم نعتمد بعد التفاصيل النهائية لكل Component أو Chart أو Interaction. هذا الهيكل هو أساس التصميم والتنفيذ، وليس واجهات نهائية.
+
+الخطوة التالية المنطقية هي تحويل الهيكل إلى **تفاصيل UI لكل صفحة**، بدءاً بـApplication Shell وCommand Center، ثم اعتماد كل صفحة قبل الانتقال إلى التالية.
